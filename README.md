@@ -1,4 +1,4 @@
-# EdgeLab v2: football + basketball analysis
+# MatchModel v2: football + basketball analysis
 
 Light theme by default with a night/day toggle. Switch sport with the Football / Basketball control; pick any league
 from the country-grouped dropdown (the list grows automatically with whatever The Odds API currently lists as active).

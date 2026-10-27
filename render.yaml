@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: edgelab-api
+    name: matchmodel-api
     runtime: docker
     plan: free
     rootDir: backend

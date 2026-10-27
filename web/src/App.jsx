@@ -240,7 +240,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <div className="brand">EdgeLab</div>
+        <div className="brand">MatchModel</div>
         <div className="seg" role="tablist" aria-label="Sport">
           <button className={sport === "football" ? "on" : ""} onClick={() => pickSport("football")}>⚽ Football</button>
           <button className={sport === "basketball" ? "on" : ""} onClick={() => pickSport("basketball")}>🏀 Basketball</button>

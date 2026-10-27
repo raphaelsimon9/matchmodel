@@ -1,6 +1,6 @@
 {
-  "name": "EdgeLab",
-  "short_name": "EdgeLab",
+  "name": "MatchModel",
+  "short_name": "MatchModel",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
