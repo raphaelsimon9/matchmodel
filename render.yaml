@@ -2,6 +2,7 @@ services:
   - type: web
     name: edgelab-api
     runtime: docker
+    plan: free
     rootDir: backend
     healthCheckPath: /api/health
     envVars:

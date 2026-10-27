@@ -1,6 +1,10 @@
 node_modules
 dist
 .env
+.env*
+.env.example
+.gitignore
+.gitignore*
 __pycache__
 .pytest_cache
 edgelab.db
