@@ -31,9 +31,9 @@ def test_log_settle_and_performance(backend, monkeypatch):
     future = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     async def fin(comp): return hist
-    async def up(comp, days): return [{"id": 999, "kickoff": future, "home": "Strong FC", "away": "Weak FC"}]
+    async def up(comp): return [{"id": 999, "kickoff": future, "home": "Strong FC", "away": "Weak FC"}]
     monkeypatch.setattr(fdata, "finished_matches", fin)
-    monkeypatch.setattr(fdata, "upcoming", up)
+    monkeypatch.setattr(fdata, "scheduled", up)
     monkeypatch.setattr(fdata.config, "FOOTBALL_DATA_KEY", "k")
 
     c = TestClient(app)

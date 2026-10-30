@@ -135,28 +135,35 @@ def assemble(f: dict, model, hist, board: Board | None, now, is_model: bool) -> 
     }
 
 
-async def build(league: dict, days: int) -> dict:
+async def build(league: dict, lo, hi) -> dict:
+    """Matches kicking off in [lo, hi). Nothing is fetched for a league that has no match in that window, which keeps
+    "all leagues" cheap on the metered APIs."""
     status, model, hist, events, boards = [], None, [], [], {}
     is_model = league["model"]
     fixtures = None
     if is_model:
         if not fdata.configured():
             raise RuntimeError("FOOTBALL_DATA_KEY is not set")
-        hist = await fdata.finished_matches(league["fd"])
-        fixtures = await fdata.upcoming(league["fd"], days)
-        model = TeamModel(hist) if len(hist) >= 30 else None
+        fixtures = oddsapi.in_range(await fdata.scheduled(league["fd"]), lo, hi) if lo < hi else []
+        if fixtures:
+            hist = await fdata.finished_matches(league["fd"])
+            model = TeamModel(hist) if len(hist) >= 30 else None
         status.append({"provider": "football-data.org", "ok": True, "matched": len(fixtures), "note": f"{len(hist)} past matches"})
     oa = {"provider": "The Odds API", "ok": False, "matched": 0, "note": ""}
-    if oddsapi.configured():
+    if is_model and not fixtures:
+        oa.update(ok=True, note="no fixtures in the selected dates")
+    elif not oddsapi.configured():
+        oa["note"] = "not configured"
+    elif not is_model and (lo >= hi or await oddsapi.events_in_range(league["oa"], lo, hi) is False):
+        oa.update(ok=True, note="no events in the selected dates")
+    else:
         try:
             events = await oddsapi.events_odds(league["oa"], "h2h,totals")
             oa["ok"] = True
         except Exception as e:
             oa["note"] = str(e)[:160]
-    else:
-        oa["note"] = "not configured"
     if fixtures is None:
-        fixtures = oddsapi.in_window(oddsapi.fixtures_from_events(events), days)
+        fixtures = oddsapi.in_range(oddsapi.fixtures_from_events(events), lo, hi)
     eventmap: dict = {}
     oa["matched"] = oddsapi.ingest(events, fixtures, boards, True, eventmap)
     status.append(oa)

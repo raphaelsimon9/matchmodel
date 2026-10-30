@@ -63,18 +63,21 @@ def assemble(f: dict, board: Board | None, lk: str) -> dict:
                                                               "books": (ml or {}).get("n", 0)}}
 
 
-async def build(league: dict, days: int) -> dict:
+async def build(league: dict, lo, hi) -> dict:
+    """Games tipping off in [lo, hi). A league with no game in that window costs no credits."""
     status, events, boards = [], [], {}
     oa = {"provider": "The Odds API", "ok": False, "matched": 0, "note": ""}
-    if oddsapi.configured():
+    if not oddsapi.configured():
+        oa["note"] = "not configured"
+    elif lo >= hi or await oddsapi.events_in_range(league["oa"], lo, hi) is False:
+        oa.update(ok=True, note="no events in the selected dates")
+    else:
         try:
             events = await oddsapi.events_odds(league["oa"], "h2h,totals")
             oa["ok"] = True
         except Exception as e:
             oa["note"] = str(e)[:160]
-    else:
-        oa["note"] = "not configured"
-    fixtures = oddsapi.in_window(oddsapi.fixtures_from_events(events), days)
+    fixtures = oddsapi.in_range(oddsapi.fixtures_from_events(events), lo, hi)
     oa["matched"] = oddsapi.ingest(events, fixtures, boards, False)
     status.append(oa)
     status.append(await oddspapi.ingest(league, "basketball", fixtures, boards))

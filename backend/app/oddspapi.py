@@ -154,6 +154,9 @@ async def ingest(league: dict, sport: str, fixtures: list, boards: dict) -> dict
     if not configured() or not league.get("op"):
         info["note"] = "not configured" if not configured() else "no tournament id for this league"
         return info
+    if not fixtures:
+        info["ok"] = True      # nothing to price in the selected dates: do not spend a request
+        return info
     try:
         nm = await participants(sport)
         cat = await catalogue() if sport == "football" else {}

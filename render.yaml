@@ -1,8 +1,7 @@
 services:
   - type: web
-    name: matchmodel-api
+    name: edgelab-api
     runtime: docker
-    plan: free
     rootDir: backend
     healthCheckPath: /api/health
     envVars:

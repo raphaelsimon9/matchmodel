@@ -1,4 +1,4 @@
-# MatchModel v2: football + basketball analysis
+# Match Model: football + basketball analysis
 
 Light theme by default with a night/day toggle. Switch sport with the Football / Basketball control; pick any league
 from the country-grouped dropdown (the list grows automatically with whatever The Odds API currently lists as active).
@@ -31,3 +31,12 @@ uvicorn app.main:app --reload
 cd web && npm install && npm run dev
 ```
 Deploy as before (Render env vars: see `backend/.env.example`; Vercel `VITE_API_URL`).
+
+
+## Dates, all leagues and the probability filter
+
+- **League → "All leagues"** loads every league of the chosen sport, a few at a time, and lists the matches by kickoff with the league name on each card. Leagues with no match in the selected dates cost no Odds API credits (a free events check runs first); a league that does have matches costs the usual credits once, then is cached for hours. "All leagues" is not remembered between visits, so opening the app never spends credits on its own.
+- **Dates** is a calendar (today up to 30 days ahead). Tap one day to load it, or tap two days to load the whole range. Days are your local days. The API takes `start` / `end` (UTC instants, end exclusive); `days` still works for older clients.
+- **Probability range** is a two-handle slider (also keyboard-operable). Only matches with at least one selection inside the range are shown, those selections are listed on the card, and values outside the range are dimmed.
+
+Deploy the backend (Render) before the web app (Vercel). On Render, `CORS_ORIGINS` must include `https://matchmodel.vercel.app`.

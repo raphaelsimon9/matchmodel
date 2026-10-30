@@ -1,4 +1,5 @@
 """Small shared helpers: cache with stale fallback, team-name matching, probability maths."""
+import asyncio
 import difflib
 import math
 import re
@@ -10,6 +11,7 @@ from statistics import NormalDist
 import httpx
 
 _cache: dict = {}
+_inflight: dict = {}
 ND = NormalDist()
 
 
@@ -17,19 +19,36 @@ def client(**kw):
     return httpx.AsyncClient(timeout=30, **kw)
 
 
-async def cached(key, ttl, fn):
-    """Cache `fn()` for ttl seconds. If refreshing fails, serve the stale value rather than erroring."""
-    hit = _cache.get(key)
-    if hit and time.time() - hit[0] < ttl:
-        return hit[1]
+async def _refresh(key, fn, stale):
     try:
         val = await fn()
     except Exception:
-        if hit:
-            return hit[1]
+        if stale:
+            return stale[1]
         raise
     _cache[key] = (time.time(), val)
     return val
+
+
+def _settle(task):
+    if not task.cancelled():
+        task.exception()      # mark as retrieved so a failure nobody awaits is not logged as "never retrieved"
+
+
+async def cached(key, ttl, fn):
+    """Cache `fn()` for ttl seconds. If refreshing fails, serve the stale value rather than erroring.
+
+    Identical calls that arrive while one is already running share it, so quickly changing the dates or loading
+    many leagues never pays twice for the same upstream request (matters for the metered Odds API)."""
+    hit = _cache.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    task = _inflight.get(key)
+    if task is None:
+        task = asyncio.ensure_future(_refresh(key, fn, hit))
+        _inflight[key] = task
+        task.add_done_callback(lambda t, k=key: (_inflight.pop(k, None), _settle(t)))
+    return await asyncio.shield(task)
 
 
 # ───────────── team-name matching ─────────────

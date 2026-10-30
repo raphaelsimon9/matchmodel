@@ -65,6 +65,21 @@ async def event_extra(sport_key: str, event_id: str, markets: str) -> dict:
     return await cached(f"oa:extra:{event_id}:{markets}", config.ODDS_CACHE_SECONDS, go)
 
 
+async def events_in_range(sport_key: str, lo, hi):
+    """Free check (this endpoint costs no credits): does the league have any event inside [lo, hi)?
+    True / False, or None when it cannot be told (the caller then just carries on as usual)."""
+    async def go():
+        async with client() as c:
+            r = await c.get(f"{BASE}/sports/{sport_key}/events", params={"apiKey": config.ODDS_API_KEY, "dateFormat": "iso"})
+            _check(r)
+            return r.json()
+    try:
+        events = await cached(f"oa:events:{sport_key}", 1800, go)
+        return any(lo <= parse_iso(e["commence_time"]) < hi for e in events)
+    except Exception:
+        return None
+
+
 def fixtures_from_events(events: list) -> list:
     return [{"id": e["id"], "kickoff": e["commence_time"], "home": e["home_team"], "away": e["away_team"]}
             for e in events if e.get("home_team") and e.get("away_team")]
@@ -105,8 +120,6 @@ def ingest(events: list, fixtures: list, boards: dict, football: bool, eventmap:
     return len(hit)
 
 
-def in_window(fixtures: list, days: int) -> list:
-    from datetime import datetime, timedelta, timezone
-    now = datetime.now(timezone.utc)
-    end = now + timedelta(days=days)
-    return [f for f in fixtures if now - timedelta(hours=1) <= parse_iso(f["kickoff"]) <= end]
+def in_range(fixtures: list, lo, hi) -> list:
+    """Fixtures kicking off inside [lo, hi) (timezone-aware datetimes)."""
+    return [f for f in fixtures if lo <= parse_iso(f["kickoff"]) < hi]

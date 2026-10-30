@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { createContext, memo, useContext, useEffect, useMemo, useState } from "react";
 import Results from "./Results.jsx";
+import DateRange from "./DateRange.jsx";
+import RangeSlider from "./RangeSlider.jsx";
+import { nextDays, toWindow } from "./dates.js";
+import { makeFilter, matching, outcomes } from "./filter.js";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const pct = (x) => (x == null ? "–" : `${Math.round(x * 100)}%`);
@@ -9,8 +13,12 @@ const store = {
 };
 const when = (iso) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
-async function api(path) {
-  const r = await fetch(`${API}${path}`);
+const ALL = "__all__";                       // League dropdown value that loads every league
+const RangeCtx = createContext({ active: false, test: () => true });   // the probability-range filter, shared by all cards
+const leagueTag = (name, country) => (country && country !== "Other" ? `${name} (${country})` : name);
+
+async function api(path, signal) {
+  const r = await fetch(`${API}${path}`, { signal });
   if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch { /* not json */ } throw new Error(m); }
   return r.json();
 }
@@ -22,10 +30,12 @@ function Conf({ c }) {
 }
 
 function Cell({ e, tone }) {
+  const f = useContext(RangeCtx);
   if (!e) return <td className="cell na">–</td>;
   const p = Math.round(e.prob * 100);
+  const rng = f.active ? (f.test(e.prob) ? "hit" : "dim") : "";
   return (
-    <td className={`cell ${tone || ""}`}>
+    <td className={`cell ${tone || ""} ${rng}`}>
       <div className="cellrow">
         <b>{p}%</b><Conf c={e.conf} />
       </div>
@@ -54,14 +64,35 @@ function PickChips({ picks }) {
   );
 }
 
+function RangeChips({ list, f }) {
+  return (
+    <>
+      <div className="muted small chiphead">{list.length} selection{list.length === 1 ? "" : "s"} between {f.lo}% and {f.hi}%</div>
+      <div className="chips tight">
+        {list.map((o, i) => (
+          <div className="chip hit" key={`${i}-${o.label}`}>
+            <span className="chiplabel">{o.label}</span>
+            <b>{pct(o.e.prob)}</b>
+            <Conf c={o.e.conf} />
+            {o.e.odds && <span className="sub">@ {o.e.odds.toFixed(2)}</span>}
+            {o.e.derived && <span className="muted small">derived</span>}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function ResultBars({ result, order }) {
+  const f = useContext(RangeCtx);
   return (
     <div className="bars3">
       {order.map(([k, name]) => {
         const e = result[k];
         if (!e) return null;
+        const rng = f.active ? (f.test(e.prob) ? "hit" : "dim") : "";
         return (
-          <div className="rb" key={k}>
+          <div className={`rb ${rng}`} key={k}>
             <div className="rbhead"><span>{name}</span><Conf c={e.conf} /></div>
             <div className="rbpct">{pct(e.prob)}</div>
             <div className="bar big"><i style={{ width: `${e.prob * 100}%` }} /></div>
@@ -111,14 +142,16 @@ function MarketBlock({ block, label, hint, canFetch, onFetch, busy }) {
   );
 }
 
-export function FootballCard({ m, league }) {
+export const FootballCard = memo(function FootballCard({ m, league }) {
+  const f = useContext(RangeCtx);
+  const inRange = useMemo(() => (f.active ? matching(m, "football", f) : null), [m, f]);
   const [tab, setTab] = useState("result");
   const [corners, setCorners] = useState(m.corners);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const fetchCorners = async () => {
     setBusy(true); setErr("");
-    try { const c = await api(`/api/extra?league=${encodeURIComponent(league)}&event=${encodeURIComponent(m.event_id)}`); setCorners(c); }
+    try { const c = await api(`/api/extra?league=${encodeURIComponent(m._lk || league)}&event=${encodeURIComponent(m.event_id)}`); setCorners(c); }
     catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
   const tabs = [["result", "Result"], ["goals", "Goals"], ["corners", "Corners"], ["shots", "Shots"], ["info", "Info"]];
@@ -127,12 +160,12 @@ export function FootballCard({ m, league }) {
     <article className="card">
       <header className="cardhead">
         <div>
-          <div className="muted small">{when(m.kickoff)}</div>
+          <div className="muted small">{when(m.kickoff)}{m._ln && <> · <span className="lgname">{leagueTag(m._ln, m._lc)}</span></>}</div>
           <h3>{m.home} <span className="vs">vs</span> {m.away}</h3>
         </div>
         <span className={`basis basis-${m.basis}`}>{m.basis === "blend" ? "Model + market" : m.basis === "model" ? "Model" : m.basis === "market" ? "Market-derived" : "No data"}</span>
       </header>
-      <PickChips picks={m.picks} />
+      {inRange ? <RangeChips list={inRange} f={f} /> : <PickChips picks={m.picks} />}
       <nav className="tabs sub-tabs">
         {tabs.map(([k, n]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{n}</button>)}
       </nav>
@@ -173,20 +206,22 @@ export function FootballCard({ m, league }) {
       )}
     </article>
   );
-}
+});
 
 /* ───────── basketball card ───────── */
-export function BasketballCard({ m }) {
+export const BasketballCard = memo(function BasketballCard({ m }) {
+  const f = useContext(RangeCtx);
+  const inRange = useMemo(() => (f.active ? matching(m, "basketball", f) : null), [m, f]);
   return (
     <article className="card">
       <header className="cardhead">
         <div>
-          <div className="muted small">{when(m.kickoff)}</div>
+          <div className="muted small">{when(m.kickoff)}{m._ln && <> · <span className="lgname">{leagueTag(m._ln, m._lc)}</span></>}</div>
           <h3>{m.away} <span className="vs">@</span> {m.home}</h3>
         </div>
         <span className="basis basis-market">Market-derived</span>
       </header>
-      <PickChips picks={m.picks} />
+      {inRange ? <RangeChips list={inRange} f={f} /> : <PickChips picks={m.picks} />}
       {Object.keys(m.result).length
         ? <ResultBars result={m.result} order={[["home", "Home to win"], ["away", "Away to win"]]} />
         : <p className="muted">No moneyline yet.</p>}
@@ -199,48 +234,103 @@ export function BasketballCard({ m }) {
       <p className="muted small">Win % is the bookmaker consensus (margin removed, Pinnacle weighted). Lines marked “derived” are extrapolated from the main total with a normal distribution; only observed lines show a price.</p>
     </article>
   );
-}
+});
 
 /* ───────── page ───────── */
 function Sun() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>; }
 function Moon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>; }
 
+const K = (name) => `matchmodel-${name}`;
+const read = (name, d) => store.get(K(name), store.get(`edgelab-${name}`, d));   // falls back to settings saved under the old name
+
 export default function App() {
-  const [theme, setTheme] = useState(() => store.get("edgelab-theme", "light"));
-  const [sport, setSport] = useState(() => store.get("edgelab-sport", "football"));
-  const [league, setLeague] = useState(() => store.get(`edgelab-league-${store.get("edgelab-sport", "football")}`, ""));
-  const [days, setDays] = useState(7);
+  const [theme, setTheme] = useState(() => read("theme", "light"));
+  const [sport, setSport] = useState(() => read("sport", "football"));
+  const [league, setLeague] = useState(() => read(`league-${read("sport", "football")}`, ""));
+  const [range, setRange] = useState(() => nextDays(7));        // inclusive local days chosen on the calendar
+  const [pr, setPr] = useState([0, 100]);                        // probability range filter (%)
   const [tab, setTab] = useState("predictions");
   const [cat, setCat] = useState(null);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [feed, setFeed] = useState(null);
   const [err, setErr] = useState("");
 
-  useEffect(() => { document.documentElement.dataset.theme = theme; store.set("edgelab-theme", theme); }, [theme]);
+  useEffect(() => { document.documentElement.dataset.theme = theme; store.set(K("theme"), theme); }, [theme]);
   useEffect(() => { api("/api/leagues").then(setCat).catch((e) => setErr(e.message)); }, []);
 
-  const groups = cat?.[sport] || [];
-  const flat = useMemo(() => groups.flatMap((g) => g.leagues), [groups]);
+  const groups = useMemo(() => cat?.[sport] || [], [cat, sport]);
+  const flat = useMemo(() => groups.flatMap((g) => g.leagues.map((l) => ({ ...l, country: g.country }))), [groups]);
   useEffect(() => {
-    if (flat.length && !flat.some((l) => l.key === league)) setLeague(flat[0].key);
+    if (flat.length && league !== ALL && !flat.some((l) => l.key === league)) setLeague(flat[0].key);
   }, [flat, league]);
 
-  useEffect(() => {
-    if (!league || !flat.some((l) => l.key === league) || tab !== "predictions") return;
-    let live = true;
-    setLoading(true); setErr(""); setData(null);
-    api(`/api/matches?sport=${sport}&league=${encodeURIComponent(league)}&days=${days}`)
-      .then((d) => live && setData(d)).catch((e) => live && setErr(e.message)).finally(() => live && setLoading(false));
-    return () => { live = false; };
-  }, [sport, league, days, tab, flat]);
+  const win = useMemo(() => toWindow(range), [range]);
 
-  const pickSport = (s) => { setSport(s); store.set("edgelab-sport", s); setLeague(store.get(`edgelab-league-${s}`, "")); setData(null); };
-  const pickLeague = (l) => { setLeague(l); store.set(`edgelab-league-${sport}`, l); };
+  useEffect(() => {
+    if (tab !== "predictions" || !flat.length) return;
+    if (league !== ALL && !flat.some((l) => l.key === league)) return;
+    const ctrl = new AbortController();
+    const live = () => !ctrl.signal.aborted;
+    const url = (key) => `/api/matches?sport=${sport}&league=${encodeURIComponent(key)}&start=${encodeURIComponent(win.start)}&end=${encodeURIComponent(win.end)}`;
+    setErr("");
+
+    if (league !== ALL) {
+      setFeed({ sport, single: true, matches: [], status: null, quota: null, errors: [], notes: [], done: 0, total: 1, running: true });
+      api(url(league), ctrl.signal)
+        .then((d) => live() && setFeed({ sport, single: true, name: d.name, matches: d.matches, status: d.status, quota: d.quota, errors: [], notes: [], done: 1, total: 1, running: false }))
+        .catch((e) => { if (live()) { setErr(e.message); setFeed((f) => f && { ...f, running: false }); } });
+      return () => ctrl.abort();
+    }
+
+    // All leagues: one request per league, a few at a time, results appear as they arrive.
+    // football-data.org (goal-model) leagues are paced by the server, so they get their own small lane.
+    const acc = { sport, single: false, matches: [], status: null, quota: null, errors: [], notes: new Set(), done: 0, total: flat.length };
+    const publish = () => live() && setFeed({ ...acc, matches: [...acc.matches], errors: [...acc.errors], notes: [...acc.notes], running: acc.done < acc.total });
+    publish();
+    const one = async (l) => {
+      try {
+        const d = await api(url(l.key), ctrl.signal);
+        if (!live()) return;
+        acc.matches.push(...d.matches.map((m) => ({ ...m, _lk: l.key, _ln: l.name, _lc: l.country })));
+        if (d.quota?.remaining != null) acc.quota = d.quota;
+        const oa = (d.status || []).find((s) => s.provider === "The Odds API");
+        if (oa && !oa.ok && oa.note && oa.note !== "not configured") acc.notes.add(oa.note);
+      } catch (e) {
+        if (!live()) return;
+        acc.errors.push({ name: l.name, message: e.message });
+      }
+      acc.done += 1;
+      publish();
+    };
+    const lane = async (items, size) => {
+      let i = 0;
+      await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
+        while (live() && i < items.length) await one(items[i++]);
+      }));
+    };
+    lane(flat.filter((l) => l.model), 2);
+    lane(flat.filter((l) => !l.model), 4);
+    return () => ctrl.abort();
+  }, [sport, league, win, tab, flat]);
+
+  const pickSport = (s) => { setSport(s); store.set(K("sport"), s); setLeague(read(`league-${s}`, "")); setFeed(null); };
+  const pickLeague = (l) => { setLeague(l); if (l !== ALL) store.set(K(`league-${sport}`), l); };   // "all" is never restored on reload (it spends API credits)
+
+  const f = useMemo(() => makeFilter(pr[0], pr[1]), [pr]);
+  const cur = feed && feed.sport === sport ? feed : null;
+  const list = useMemo(() => {
+    if (!cur) return [];
+    const byTime = cur.single ? cur.matches : [...cur.matches].sort((a, b) => (a.kickoff < b.kickoff ? -1 : a.kickoff > b.kickoff ? 1 : 0));
+    return f.active ? byTime.filter((m) => outcomes(m, sport).some((o) => f.test(o.e.prob))) : byTime;
+  }, [cur, f, sport]);
+
+  const isAll = league === ALL;
+  const found = cur ? cur.matches.length : 0;
+  const lgName = cur?.name;
 
   return (
     <div className="app">
       <header className="top">
-        <div className="brand">MatchModel</div>
+        <div className="brand">Match Model</div>
         <div className="seg" role="tablist" aria-label="Sport">
           <button className={sport === "football" ? "on" : ""} onClick={() => pickSport("football")}>⚽ Football</button>
           <button className={sport === "basketball" ? "on" : ""} onClick={() => pickSport("basketball")}>🏀 Basketball</button>
@@ -260,6 +350,7 @@ export default function App() {
           <section className="controls">
             <label>League
               <select value={league} onChange={(e) => pickLeague(e.target.value)}>
+                {flat.length > 0 && <option value={ALL}>All leagues ({flat.length})</option>}
                 {groups.map((g) => (
                   <optgroup key={g.country} label={g.country}>
                     {g.leagues.map((l) => <option key={l.key} value={l.key}>{l.name}{l.model ? " ★" : ""}</option>)}
@@ -267,31 +358,71 @@ export default function App() {
                 ))}
               </select>
             </label>
-            <label>Next
-              <select value={days} onChange={(e) => setDays(+e.target.value)}>
-                {[1, 2, 3, 5, 7, 10, 14].map((d) => <option key={d} value={d}>{d} day{d > 1 ? "s" : ""}</option>)}
-              </select>
-            </label>
+            <div className="field">Dates
+              <DateRange value={range} onChange={setRange} />
+            </div>
             {sport === "football" && <span className="muted small legend">★ = full goal model (football-data.org). Others use bookmaker prices.</span>}
           </section>
 
-          {data?.status && (
+          <section className="rangebox" aria-label="Probability filter">
+            <div className="rangehead">
+              <span className="rl">Probability range</span>
+              <b className="rv">{pr[0]}% – {pr[1]}%</b>
+              {f.active && <button className="btn sm" onClick={() => setPr([0, 100])}>Reset</button>}
+            </div>
+            <RangeSlider value={pr} onChange={setPr} label="probability" />
+            <div className="rangescale" aria-hidden="true"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+            <p className="muted small">
+              {f.active
+                ? "Showing only matches that have a selection inside this range; selections outside it are dimmed."
+                : "Drag the handles to keep only selections inside a probability range, e.g. 75% – 95%."}
+            </p>
+          </section>
+
+          {cur && !cur.single && (
             <div className="status">
-              {data.status.map((s) => (
+              <span className={`pill ${cur.running ? "" : "ok"}`}>{cur.running ? `Loading leagues… ${cur.done}/${cur.total}` : `${cur.total - cur.errors.length}/${cur.total} leagues loaded`}</span>
+              {cur.quota?.remaining != null && <span className="pill">Odds API credits left: {cur.quota.remaining}</span>}
+              {cur.notes.length > 0 && <span className="pill off" title={cur.notes.join("\n")}>Odds paused for some leagues · {cur.notes[0].slice(0, 40)}</span>}
+              {cur.errors.length > 0 && (
+                <span className="pill off" title={cur.errors.map((x) => `${x.name}: ${x.message}`).join("\n")}>{cur.errors.length} league{cur.errors.length > 1 ? "s" : ""} failed to load</span>
+              )}
+            </div>
+          )}
+          {cur?.single && cur.status && (
+            <div className="status">
+              {cur.status.map((s) => (
                 <span key={s.provider} className={`pill ${s.ok ? "ok" : "off"}`} title={s.note}>{s.provider}{s.ok ? ` · ${s.matched}` : ""}{!s.ok && s.note ? ` · ${s.note.slice(0, 40)}` : ""}</span>
               ))}
-              {data.quota?.remaining != null && <span className="pill">Odds API credits left: {data.quota.remaining}</span>}
+              {cur.quota?.remaining != null && <span className="pill">Odds API credits left: {cur.quota.remaining}</span>}
             </div>
+          )}
+          {isAll && cur?.running && <p className="muted small">Each league with matches uses Odds API credits the first time it loads (then it is cached for hours), so loading everything can use a fair share of a free monthly allowance.</p>}
+          {isAll && cur && cur.errors.length > 0 && !cur.running && (
+            <details className="small muted"><summary>Which leagues failed?</summary>
+              <ul>{cur.errors.map((x) => <li key={x.name}>{x.name}: {x.message}</li>)}</ul>
+            </details>
           )}
 
           {err && <p className="err">{err}</p>}
-          {loading && <p className="muted">Loading {sport} matches…</p>}
-          {data && !loading && !data.matches.length && <p className="muted">No upcoming matches in the next {days} day(s) for {data.name}. Try a longer window or another league.</p>}
-          <div className="grid">
-            {data?.matches.map((m) => sport === "football"
-              ? <FootballCard key={m.id} m={m} league={league} />
-              : <BasketballCard key={m.id} m={m} />)}
-          </div>
+          {cur?.running && found === 0 && <p className="muted">Loading {sport} matches…</p>}
+          {cur && !cur.running && found === 0 && !err && (
+            <p className="muted">No matches in the selected dates{isAll ? " across any league" : lgName ? ` for ${lgName}` : ""}. Try other dates{isAll ? "" : " or another league"}.</p>
+          )}
+          {cur && found > 0 && f.active && (
+            <p className="muted small">{list.length} of {found} match{found === 1 ? "" : "es"} have a selection between {f.lo}% and {f.hi}%.</p>
+          )}
+          {cur && found > 0 && list.length === 0 && f.active && !cur.running && <p className="muted">No match has a selection in that range. Widen it or press Reset.</p>}
+          <RangeCtx.Provider value={f}>
+            <div className="grid">
+              {list.map((m) => {
+                const lk = m._lk || league;
+                return sport === "football"
+                  ? <FootballCard key={`${lk}-${m.id}`} m={m} league={lk} />
+                  : <BasketballCard key={`${lk}-${m.id}`} m={m} />;
+              })}
+            </div>
+          </RangeCtx.Provider>
         </>
       )}
       <footer className="foot muted small">Probabilities are estimates, not guarantees. Gamble responsibly and only with money you can afford to lose.</footer>
